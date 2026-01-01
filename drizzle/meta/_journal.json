@@ -1,19 +1,12 @@
 {
   "version": "7",
-  "dialect": "mysql",
+  "dialect": "sqlite",
   "entries": [
     {
       "idx": 0,
-      "version": "5",
-      "when": 1767281322683,
-      "tag": "0000_strong_punisher",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": 1767281422535,
-      "tag": "0001_secret_thanos",
+      "version": "6",
+      "when": 1767285642917,
+      "tag": "0000_fresh_karnak",
       "breakpoints": true
     }
   ]

@@ -1,25 +1,26 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint, boolean } from "drizzle-orm/mysql-core";
+import { integer, text, sqliteTable } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Core user table backing auth flow.
  * Extend this file with additional tables as your product grows.
  * Columns use camelCase to match both database fields and generated types.
  */
-export const users = mysqlTable("users", {
+export const users = sqliteTable("users", {
   /**
    * Surrogate primary key. Auto-incremented numeric value managed by the database.
    * Use this for relations between tables.
    */
-  id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
-  openId: varchar("openId", { length: 64 }).notNull().unique(),
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  /** User identifier (openId). Unique per user. */
+  openId: text("openId").notNull().unique(),
   name: text("name"),
-  email: varchar("email", { length: 320 }),
-  loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+  email: text("email"),
+  loginMethod: text("loginMethod"),
+  role: text("role", { enum: ["user", "admin"] }).notNull().default("user"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
+  lastSignedIn: integer("lastSignedIn", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
 });
 
 export type User = typeof users.$inferSelect;
@@ -28,12 +29,12 @@ export type InsertUser = typeof users.$inferInsert;
 /**
  * Tray events table - logs every removal and insertion event
  */
-export const trayEvents = mysqlTable("tray_events", {
-  id: varchar("id", { length: 36 }).primaryKey(), // UUID
-  trayNumber: int("tray_number").notNull(), // Current tray number (1-16)
-  eventType: mysqlEnum("event_type", ["remove", "insert"]).notNull(),
-  timestamp: bigint("timestamp", { mode: "number" }).notNull(), // Unix timestamp in milliseconds
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const trayEvents = sqliteTable("tray_events", {
+  id: text("id").primaryKey(), // UUID
+  trayNumber: integer("tray_number").notNull(), // Current tray number (1-16)
+  eventType: text("event_type", { enum: ["remove", "insert"] }).notNull(),
+  timestamp: integer("timestamp").notNull(), // Unix timestamp in milliseconds
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
 });
 
 export type TrayEvent = typeof trayEvents.$inferSelect;
@@ -43,14 +44,14 @@ export type InsertTrayEvent = typeof trayEvents.$inferInsert;
  * App settings table - stores current tray number and next change time
  * Single row table for single-user app
  */
-export const appSettings = mysqlTable("app_settings", {
-  id: int("id").primaryKey().default(1), // Always 1 for single-user
-  currentTrayNumber: int("current_tray_number").notNull().default(2), // Starting tray
-  totalTrays: int("total_trays").notNull().default(16), // Total number of trays
-  nextTrayChangeTime: bigint("next_tray_change_time", { mode: "number" }).notNull(), // Unix timestamp in milliseconds for next Tuesday 7pm
-  lastTrayChangeTime: bigint("last_tray_change_time", { mode: "number" }), // Unix timestamp of last automatic change
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+export const appSettings = sqliteTable("app_settings", {
+  id: integer("id").primaryKey().default(1), // Always 1 for single-user
+  currentTrayNumber: integer("current_tray_number").notNull().default(2), // Starting tray
+  totalTrays: integer("total_trays").notNull().default(16), // Total number of trays
+  nextTrayChangeTime: integer("next_tray_change_time").notNull(), // Unix timestamp in milliseconds for next Tuesday 7pm
+  lastTrayChangeTime: integer("last_tray_change_time"), // Unix timestamp of last automatic change
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
 });
 
 export type AppSettings = typeof appSettings.$inferSelect;

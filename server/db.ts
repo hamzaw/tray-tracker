@@ -1,15 +1,23 @@
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import Database from "better-sqlite3";
 import { InsertUser, users, trayEvents, InsertTrayEvent, appSettings, InsertAppSettings } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _sqlite: Database.Database | null = null;
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
+// Note: better-sqlite3 is synchronous, but we keep async for compatibility
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+  if (!_db) {
+    const dbPath = process.env.DATABASE_URL || "./database.sqlite";
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _sqlite = new Database(dbPath);
+      // Enable foreign keys and WAL mode for better performance
+      _sqlite.pragma("foreign_keys = ON");
+      _sqlite.pragma("journal_mode = WAL");
+      _db = drizzle(_sqlite);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -68,7 +76,9 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet.lastSignedIn = new Date();
     }
 
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
+    // SQLite uses INSERT OR REPLACE for upsert
+    await db.insert(users).values(values).onConflictDoUpdate({
+      target: users.openId,
       set: updateSet,
     });
   } catch (error) {
@@ -174,7 +184,9 @@ export async function initializeAppSettings(nextTrayChangeTime: number) {
     lastTrayChangeTime: null,
   };
   
-  await db.insert(appSettings).values(settings).onDuplicateKeyUpdate({
+  // SQLite uses INSERT OR REPLACE for upsert
+  await db.insert(appSettings).values(settings).onConflictDoUpdate({
+    target: appSettings.id,
     set: {
       updatedAt: new Date(),
     },
