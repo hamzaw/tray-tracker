@@ -1,0 +1,8 @@
+{
+  "query": "UPDATE settings SET current_tray = 2, next_change_date = DATE_ADD(NOW(), INTERVAL 5 DAY) WHERE id = 1;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway03.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2GPt1AU6NqBXhEp.root --database ZMJXzgpiXPjLYAavcaQ7ni --execute UPDATE settings SET current_tray = 2, next_change_date = DATE_ADD(NOW(), INTERVAL 5 DAY) WHERE id = 1;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1146 (42S02) at line 1: Table 'zmjxzgpixpjlyaavcaq7ni.settings' doesn't exist"
+  ]
+}
