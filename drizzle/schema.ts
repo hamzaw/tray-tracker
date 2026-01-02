@@ -1,26 +1,29 @@
-import { integer, text, sqliteTable } from "drizzle-orm/sqlite-core";
-import { sql } from "drizzle-orm";
+import { integer, pgEnum, pgTable, text, timestamp, bigint, serial } from "drizzle-orm/pg-core";
+
+// Enums
+export const roleEnum = pgEnum("role", ["user", "admin"]);
+export const eventTypeEnum = pgEnum("event_type", ["remove", "insert"]);
 
 /**
  * Core user table backing auth flow.
  * Extend this file with additional tables as your product grows.
  * Columns use camelCase to match both database fields and generated types.
  */
-export const users = sqliteTable("users", {
+export const users = pgTable("users", {
   /**
    * Surrogate primary key. Auto-incremented numeric value managed by the database.
    * Use this for relations between tables.
    */
-  id: integer("id").primaryKey({ autoIncrement: true }),
+  id: serial("id").primaryKey(),
   /** User identifier (openId). Unique per user. */
   openId: text("openId").notNull().unique(),
   name: text("name"),
   email: text("email"),
   loginMethod: text("loginMethod"),
-  role: text("role", { enum: ["user", "admin"] }).notNull().default("user"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
-  lastSignedIn: integer("lastSignedIn", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
+  role: roleEnum("role").notNull().default("user"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  lastSignedIn: timestamp("lastSignedIn").notNull().defaultNow(),
 });
 
 export type User = typeof users.$inferSelect;
@@ -29,12 +32,12 @@ export type InsertUser = typeof users.$inferInsert;
 /**
  * Tray events table - logs every removal and insertion event
  */
-export const trayEvents = sqliteTable("tray_events", {
+export const trayEvents = pgTable("tray_events", {
   id: text("id").primaryKey(), // UUID
   trayNumber: integer("tray_number").notNull(), // Current tray number (1-16)
-  eventType: text("event_type", { enum: ["remove", "insert"] }).notNull(),
-  timestamp: integer("timestamp").notNull(), // Unix timestamp in milliseconds
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
+  eventType: eventTypeEnum("event_type").notNull(),
+  timestamp: bigint("timestamp", { mode: "number" }).notNull(), // Unix timestamp in milliseconds
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export type TrayEvent = typeof trayEvents.$inferSelect;
@@ -44,14 +47,14 @@ export type InsertTrayEvent = typeof trayEvents.$inferInsert;
  * App settings table - stores current tray number and next change time
  * Single row table for single-user app
  */
-export const appSettings = sqliteTable("app_settings", {
+export const appSettings = pgTable("app_settings", {
   id: integer("id").primaryKey().default(1), // Always 1 for single-user
   currentTrayNumber: integer("current_tray_number").notNull().default(2), // Starting tray
   totalTrays: integer("total_trays").notNull().default(16), // Total number of trays
-  nextTrayChangeTime: integer("next_tray_change_time").notNull(), // Unix timestamp in milliseconds for next Tuesday 7pm
-  lastTrayChangeTime: integer("last_tray_change_time"), // Unix timestamp of last automatic change
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(strftime('%s', 'now'))`),
+  nextTrayChangeTime: bigint("next_tray_change_time", { mode: "number" }).notNull(), // Unix timestamp in milliseconds for next Tuesday 7pm
+  lastTrayChangeTime: bigint("last_tray_change_time", { mode: "number" }), // Unix timestamp of last automatic change
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
 
 export type AppSettings = typeof appSettings.$inferSelect;

@@ -1,23 +1,25 @@
-import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import Database from "better-sqlite3";
+import { eq, desc, and, gte, lte } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 import { InsertUser, users, trayEvents, InsertTrayEvent, appSettings, InsertAppSettings } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
-let _sqlite: Database.Database | null = null;
+let _pool: Pool | null = null;
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
-// Note: better-sqlite3 is synchronous, but we keep async for compatibility
 export async function getDb() {
   if (!_db) {
-    const dbPath = process.env.DATABASE_URL || "./database.sqlite";
+    const connectionString = ENV.databaseUrl || process.env.DATABASE_URL;
+    if (!connectionString) {
+      console.warn("[Database] DATABASE_URL is not configured");
+      return null;
+    }
     try {
-      _sqlite = new Database(dbPath);
-      // Enable foreign keys and WAL mode for better performance
-      _sqlite.pragma("foreign_keys = ON");
-      _sqlite.pragma("journal_mode = WAL");
-      _db = drizzle(_sqlite);
+      _pool = new Pool({
+        connectionString,
+      });
+      _db = drizzle(_pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -63,9 +65,6 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.role !== undefined) {
       values.role = user.role;
       updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
     }
 
     if (!values.lastSignedIn) {
@@ -76,7 +75,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet.lastSignedIn = new Date();
     }
 
-    // SQLite uses INSERT OR REPLACE for upsert
+    // PostgreSQL upsert
     await db.insert(users).values(values).onConflictDoUpdate({
       target: users.openId,
       set: updateSet,
@@ -184,7 +183,7 @@ export async function initializeAppSettings(nextTrayChangeTime: number) {
     lastTrayChangeTime: null,
   };
   
-  // SQLite uses INSERT OR REPLACE for upsert
+  // PostgreSQL upsert
   await db.insert(appSettings).values(settings).onConflictDoUpdate({
     target: appSettings.id,
     set: {
