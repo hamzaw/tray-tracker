@@ -54,7 +54,7 @@ export const appSettings = pgTable("app_settings", {
   nextTrayChangeTime: bigint("next_tray_change_time", { mode: "number" }).notNull(), // Unix timestamp in milliseconds for next Tuesday 7pm
   lastTrayChangeTime: bigint("last_tray_change_time", { mode: "number" }), // Unix timestamp of last automatic change
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export type AppSettings = typeof appSettings.$inferSelect;
