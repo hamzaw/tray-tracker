@@ -34,6 +34,22 @@ function formatCountdown(ms: number): string {
   return `${minutes}m`;
 }
 
+// Calculate next Tuesday at 7pm in local timezone
+function getNextTuesdayAt7PMLocal(): number {
+  const now = new Date();
+  const daysUntilTuesday = (2 - now.getDay() + 7) % 7 || 7; // 2 = Tuesday
+  const nextTuesday = new Date(now);
+  nextTuesday.setDate(now.getDate() + daysUntilTuesday);
+  nextTuesday.setHours(19, 0, 0, 0); // 7pm local time
+  
+  // If we're past 7pm on Tuesday, go to next week
+  if (nextTuesday.getTime() <= now.getTime()) {
+    nextTuesday.setDate(nextTuesday.getDate() + 7);
+  }
+  
+  return nextTuesday.getTime();
+}
+
 export default function Home() {
   const utils = trpc.useUtils();
   const { data: settings } = trpc.settings.get.useQuery();
@@ -41,12 +57,26 @@ export default function Home() {
 
   const checkAndUpdate = trpc.settings.checkAndUpdateTray.useMutation();
   const logEvent = trpc.tray.logEvent.useMutation();
+  const updateNextChangeTime = trpc.settings.updateNextChangeTime.useMutation();
   
   const [isTrayOut, setIsTrayOut] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [removalStartTime, setRemovalStartTime] = useState<number | null>(null);
   const [showReminder, setShowReminder] = useState(false);
   const [hasRequestedPermission, setHasRequestedPermission] = useState(false);
+
+  // Sync next change time with local timezone when settings load
+  useEffect(() => {
+    if (settings) {
+      const localNextChangeTime = getNextTuesdayAt7PMLocal();
+      // If the stored time is significantly different (more than 1 hour), update it
+      // This handles timezone differences between server and client
+      const timeDiff = Math.abs(settings.nextTrayChangeTime - localNextChangeTime);
+      if (timeDiff > 60 * 60 * 1000) { // More than 1 hour difference
+        updateNextChangeTime.mutate({ nextChangeTime: localNextChangeTime });
+      }
+    }
+  }, [settings, updateNextChangeTime]);
 
   // Check for tray auto-increment on mount and periodically
   useEffect(() => {
@@ -161,7 +191,9 @@ export default function Home() {
     }
   };
 
-  const timeUntilNextTray = settings ? settings.nextTrayChangeTime - Date.now() : 0;
+  // Calculate next Tuesday at 7pm in local time for accurate countdown
+  const nextChangeTimeLocal = getNextTuesdayAt7PMLocal();
+  const timeUntilNextTray = settings ? nextChangeTimeLocal - Date.now() : 0;
   const isOverdue = elapsedTime >= 30 * 60 * 1000;
 
   // Determine compliance status color

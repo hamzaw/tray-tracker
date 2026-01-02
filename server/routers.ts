@@ -14,13 +14,16 @@ import {
   incrementTrayNumber,
 } from "./db";
 
-// Helper function to calculate next Tuesday at 7pm
+// Helper function to calculate next Tuesday at 7pm in local time
+// Note: This uses the server's local timezone. For user-specific timezones,
+// calculate on the client and pass the timestamp.
 function getNextTuesdayAt7PM(): number {
   const now = new Date();
   const daysUntilTuesday = (2 - now.getDay() + 7) % 7 || 7; // 2 = Tuesday
   const nextTuesday = new Date(now);
   nextTuesday.setDate(now.getDate() + daysUntilTuesday);
-  nextTuesday.setHours(19, 0, 0, 0); // 7pm
+  // Use setHours which works in local timezone
+  nextTuesday.setHours(19, 0, 0, 0); // 7pm local time
   
   // If we're past 7pm on Tuesday, go to next week
   if (nextTuesday.getTime() <= now.getTime()) {
@@ -90,7 +93,8 @@ export const appRouter = router({
     get: publicProcedure.query(async () => {
       let settings = await getAppSettings();
       
-      // Initialize if not exists
+      // Initialize if not exists - use server's local time as fallback
+      // Client should update this with local timezone calculation
       if (!settings) {
         const nextChangeTime = getNextTuesdayAt7PM();
         await initializeAppSettings(nextChangeTime);
@@ -99,6 +103,16 @@ export const appRouter = router({
       
       return settings;
     }),
+
+    // Update next change time (calculated on client with local timezone)
+    updateNextChangeTime: publicProcedure
+      .input(z.object({ nextChangeTime: z.number() }))
+      .mutation(async ({ input }) => {
+        await updateAppSettings({
+          nextTrayChangeTime: input.nextChangeTime,
+        });
+        return { success: true };
+      }),
 
     // Check and update tray number if needed
     checkAndUpdateTray: publicProcedure.mutation(async () => {
