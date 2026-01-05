@@ -1,7 +1,7 @@
 import { eq, desc, and, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
-import { InsertUser, users, trayEvents, InsertTrayEvent, appSettings, InsertAppSettings } from "../drizzle/schema";
+import { InsertUser, users, trayEvents, InsertTrayEvent, appSettings, InsertAppSettings, achievements, InsertAchievement } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -157,6 +157,26 @@ export async function getLastTrayEvent() {
   return result.length > 0 ? result[0] : null;
 }
 
+export async function deleteTrayEvent(eventId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.delete(trayEvents).where(eq(trayEvents.id, eventId));
+}
+
+export async function getTrayEventById(eventId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db
+    .select()
+    .from(trayEvents)
+    .where(eq(trayEvents.id, eventId))
+    .limit(1);
+  
+  return result.length > 0 ? result[0] : null;
+}
+
 // App settings helpers
 export async function getAppSettings() {
   const db = await getDb();
@@ -219,4 +239,35 @@ export async function incrementTrayNumber() {
   });
   
   return newTrayNumber;
+}
+
+// Achievement helpers
+export async function insertAchievement(achievement: InsertAchievement) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  await db.insert(achievements).values(achievement);
+}
+
+export async function getAllAchievements() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  return await db
+    .select()
+    .from(achievements)
+    .orderBy(desc(achievements.unlockedAt));
+}
+
+export async function getAchievementByType(achievementType: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db
+    .select()
+    .from(achievements)
+    .where(eq(achievements.achievementType, achievementType as any))
+    .limit(1);
+  
+  return result.length > 0 ? result[0] : null;
 }

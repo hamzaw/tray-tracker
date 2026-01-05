@@ -12,6 +12,11 @@ import {
   initializeAppSettings,
   updateAppSettings,
   incrementTrayNumber,
+  deleteTrayEvent,
+  getTrayEventById,
+  insertAchievement,
+  getAllAchievements,
+  getAchievementByType,
 } from "./db";
 
 // Helper function to calculate next Tuesday at 7pm in local time
@@ -47,13 +52,14 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
+        const eventId = nanoid();
         await insertTrayEvent({
-          id: nanoid(),
+          id: eventId,
           trayNumber: input.trayNumber,
           eventType: input.eventType,
           timestamp: input.timestamp,
         });
-        return { success: true };
+        return { success: true, eventId };
       }),
 
     // Get the last event to determine current state
@@ -85,6 +91,31 @@ export const appRouter = router({
       )
       .query(async ({ input }) => {
         return await getTrayEventsByTimeRange(input.startTime, input.endTime);
+      }),
+
+    // Cancel a remove event (only within 60 seconds)
+    cancelRemoveEvent: publicProcedure
+      .input(z.object({ eventId: z.string() }))
+      .mutation(async ({ input }) => {
+        const event = await getTrayEventById(input.eventId);
+        if (!event) {
+          throw new Error("Event not found");
+        }
+        
+        if (event.eventType !== "remove") {
+          throw new Error("Can only cancel remove events");
+        }
+        
+        const now = Date.now();
+        const timeSinceEvent = now - event.timestamp;
+        const sixtySeconds = 60 * 1000;
+        
+        if (timeSinceEvent > sixtySeconds) {
+          throw new Error("Can only cancel events within 60 seconds");
+        }
+        
+        await deleteTrayEvent(input.eventId);
+        return { success: true };
       }),
   }),
 
@@ -455,6 +486,205 @@ export const appRouter = router({
         
         return results.sort((a, b) => a.period.localeCompare(b.period));
       }),
+  }),
+
+  achievements: router({
+    // Get all achievements
+    getAll: publicProcedure.query(async () => {
+      return await getAllAchievements();
+    }),
+
+    // Check for new achievements and award them
+    checkAndAward: publicProcedure.mutation(async () => {
+      const newAchievements = [];
+      const allEvents = await getRecentTrayEvents(10000);
+      const allAchievements = await getAllAchievements();
+      const existingTypes = new Set(allAchievements.map(a => a.achievementType));
+      
+      // Check for perfect day achievements
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startTime = today.getTime();
+      const endTime = startTime + 24 * 60 * 60 * 1000;
+      const todayEvents = await getTrayEventsByTimeRange(startTime, endTime);
+      
+      // Calculate today's compliance
+      let totalOutTime = 0;
+      let lastRemoveTime: number | null = null;
+      const sortedTodayEvents = todayEvents.sort((a, b) => a.timestamp - b.timestamp);
+      
+      for (const event of sortedTodayEvents) {
+        if (event.eventType === "remove") {
+          lastRemoveTime = event.timestamp;
+        } else if (event.eventType === "insert" && lastRemoveTime !== null) {
+          totalOutTime += event.timestamp - lastRemoveTime;
+          lastRemoveTime = null;
+        }
+      }
+      
+      if (lastRemoveTime !== null) {
+        const now = Date.now();
+        totalOutTime += now - lastRemoveTime;
+      }
+      
+      const wearTime = (Date.now() - startTime) - totalOutTime;
+      const recommendedWearTime = 22.5 * 60 * 60 * 1000;
+      const compliancePercentage = Math.min(100, (wearTime / recommendedWearTime) * 100);
+      
+      // Perfect day (95%+ compliance)
+      if (compliancePercentage >= 95 && !existingTypes.has("perfect_day")) {
+        const achievement = {
+          id: nanoid(),
+          achievementType: "perfect_day" as const,
+          title: "Perfect Day! 🌟",
+          description: "Achieved 95%+ compliance in a single day",
+          icon: "🌟",
+          metadata: JSON.stringify({ compliancePercentage: Math.round(compliancePercentage) }),
+        };
+        await insertAchievement(achievement);
+        newAchievements.push(achievement);
+      }
+      
+      // Check for 3-day streak (85%+ compliance for 3 consecutive days)
+      if (!existingTypes.has("streak_3")) {
+        const now = Date.now();
+        let streakCount = 0;
+        const minCompliance = 85; // 85% minimum for streak
+        
+        // Check last 3 days (including today)
+        for (let daysAgo = 0; daysAgo < 3; daysAgo++) {
+          const checkDate = new Date(now - daysAgo * 24 * 60 * 60 * 1000);
+          checkDate.setHours(0, 0, 0, 0);
+          const dayStart = checkDate.getTime();
+          const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+          
+          const dayEvents = await getTrayEventsByTimeRange(dayStart, dayEnd);
+          
+          // Calculate compliance for this day
+          let dayOutTime = 0;
+          let dayLastRemoveTime: number | null = null;
+          const sortedDayEvents = dayEvents.sort((a, b) => a.timestamp - b.timestamp);
+          
+          for (const event of sortedDayEvents) {
+            if (event.eventType === "remove") {
+              dayLastRemoveTime = event.timestamp;
+            } else if (event.eventType === "insert" && dayLastRemoveTime !== null) {
+              dayOutTime += event.timestamp - dayLastRemoveTime;
+              dayLastRemoveTime = null;
+            }
+          }
+          
+          // If tray still out, count until end of day or now
+          if (dayLastRemoveTime !== null) {
+            const effectiveEnd = Math.min(now, dayEnd);
+            if (dayLastRemoveTime < effectiveEnd) {
+              dayOutTime += effectiveEnd - dayLastRemoveTime;
+            }
+          }
+          
+          const dayWearTime = (daysAgo === 0 ? Math.min(now - dayStart, 24 * 60 * 60 * 1000) : 24 * 60 * 60 * 1000) - dayOutTime;
+          const dayRecommendedWearTime = daysAgo === 0 
+            ? ((now - dayStart) / (24 * 60 * 60 * 1000)) * (22.5 * 60 * 60 * 1000)
+            : 22.5 * 60 * 60 * 1000;
+          const dayCompliance = dayRecommendedWearTime > 0 
+            ? Math.min(100, (dayWearTime / dayRecommendedWearTime) * 100)
+            : 0;
+          
+          if (dayCompliance >= minCompliance) {
+            streakCount++;
+          } else {
+            break; // Streak broken
+          }
+        }
+        
+        if (streakCount >= 3) {
+          const achievement = {
+            id: nanoid(),
+            achievementType: "streak_3" as const,
+            title: "3-Day Streak! 🔥",
+            description: "Maintained 85%+ compliance for 3 consecutive days",
+            icon: "🔥",
+            metadata: JSON.stringify({ streakDays: 3 }),
+          };
+          await insertAchievement(achievement);
+          newAchievements.push(achievement);
+        }
+      }
+      
+      // Check for quick return achievements (tray out for less than 5 minutes)
+      const recentEvents = allEvents.slice(0, 100).sort((a, b) => a.timestamp - b.timestamp);
+      for (let i = 0; i < recentEvents.length - 1; i++) {
+        const removeEvent = recentEvents[i];
+        const insertEvent = recentEvents[i + 1];
+        
+        if (removeEvent.eventType === "remove" && insertEvent.eventType === "insert" && 
+            removeEvent.trayNumber === insertEvent.trayNumber) {
+          const duration = insertEvent.timestamp - removeEvent.timestamp;
+          const fiveMinutes = 5 * 60 * 1000;
+          
+          if (duration < fiveMinutes && !existingTypes.has("quick_return")) {
+            const achievement = {
+              id: nanoid(),
+              achievementType: "quick_return" as const,
+              title: "Quick Return! ⚡",
+              description: "Put your tray back in less than 5 minutes",
+              icon: "⚡",
+              metadata: JSON.stringify({ duration }),
+            };
+            await insertAchievement(achievement);
+            newAchievements.push(achievement);
+            break; // Only award once
+          }
+        }
+      }
+      
+      // Check for tray milestones
+      const settings = await getAppSettings();
+      if (settings) {
+        const trayNumber = settings.currentTrayNumber;
+        
+        if (trayNumber >= 5 && !existingTypes.has("milestone_tray_5")) {
+          const achievement = {
+            id: nanoid(),
+            achievementType: "milestone_tray_5" as const,
+            title: "Tray 5 Milestone! 🎯",
+            description: "Reached tray #5",
+            icon: "🎯",
+            metadata: JSON.stringify({ trayNumber: 5 }),
+          };
+          await insertAchievement(achievement);
+          newAchievements.push(achievement);
+        }
+        
+        if (trayNumber >= 10 && !existingTypes.has("milestone_tray_10")) {
+          const achievement = {
+            id: nanoid(),
+            achievementType: "milestone_tray_10" as const,
+            title: "Tray 10 Milestone! 🏆",
+            description: "Reached tray #10",
+            icon: "🏆",
+            metadata: JSON.stringify({ trayNumber: 10 }),
+          };
+          await insertAchievement(achievement);
+          newAchievements.push(achievement);
+        }
+        
+        if (trayNumber >= 15 && !existingTypes.has("milestone_tray_15")) {
+          const achievement = {
+            id: nanoid(),
+            achievementType: "milestone_tray_15" as const,
+            title: "Tray 15 Milestone! 👑",
+            description: "Reached tray #15",
+            icon: "👑",
+            metadata: JSON.stringify({ trayNumber: 15 }),
+          };
+          await insertAchievement(achievement);
+          newAchievements.push(achievement);
+        }
+      }
+      
+      return { newAchievements };
+    }),
   }),
 });
 

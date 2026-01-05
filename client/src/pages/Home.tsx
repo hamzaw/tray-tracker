@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Timer, Smile, AlertCircle, Calendar, TrendingUp } from "lucide-react";
+import { Timer, Smile, AlertCircle, Calendar, TrendingUp, Trophy, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { Link } from "wouter";
@@ -58,12 +58,17 @@ export default function Home() {
   const checkAndUpdate = trpc.settings.checkAndUpdateTray.useMutation();
   const logEvent = trpc.tray.logEvent.useMutation();
   const updateNextChangeTime = trpc.settings.updateNextChangeTime.useMutation();
+  const cancelRemoveEvent = trpc.tray.cancelRemoveEvent.useMutation();
+  const checkAchievements = trpc.achievements.checkAndAward.useMutation();
+  const { data: achievements } = trpc.achievements.getAll.useQuery();
   
   const [isTrayOut, setIsTrayOut] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [removalStartTime, setRemovalStartTime] = useState<number | null>(null);
+  const [lastRemoveEventId, setLastRemoveEventId] = useState<string | null>(null);
   const [showReminder, setShowReminder] = useState(false);
   const [hasRequestedPermission, setHasRequestedPermission] = useState(false);
+  const [canCancel, setCanCancel] = useState(false);
 
   // Sync next change time with local timezone when settings load
   useEffect(() => {
@@ -96,6 +101,21 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  // Check for achievements on mount
+  useEffect(() => {
+    const checkAchievementsOnLoad = async () => {
+      try {
+        await checkAchievements.mutateAsync();
+        utils.achievements.getAll.invalidate();
+      } catch (err) {
+        // Silently fail
+        console.error("Failed to check achievements on load:", err);
+      }
+    };
+    
+    checkAchievementsOnLoad();
+  }, []);
+
   // Initialize state from last event
   useEffect(() => {
     if (lastEvent) {
@@ -103,10 +123,17 @@ export default function Home() {
       setIsTrayOut(isOut);
       
       if (isOut) {
+        const now = Date.now();
+        const elapsed = now - lastEvent.timestamp;
         setRemovalStartTime(lastEvent.timestamp);
+        setLastRemoveEventId(lastEvent.id);
+        setElapsedTime(elapsed);
+        setCanCancel(elapsed < 60 * 1000); // Can cancel if within 60 seconds
       } else {
         setRemovalStartTime(null);
         setElapsedTime(0);
+        setLastRemoveEventId(null);
+        setCanCancel(false);
       }
     }
   }, [lastEvent]);
@@ -121,6 +148,10 @@ export default function Home() {
       const now = Date.now();
       const elapsed = now - removalStartTime;
       setElapsedTime(elapsed);
+      
+      // Check if we can still cancel (within 60 seconds)
+      const sixtySeconds = 60 * 1000;
+      setCanCancel(elapsed < sixtySeconds);
       
       // Check for 30-minute reminder
       if (elapsed >= 30 * 60 * 1000 && !showReminder) {
@@ -162,7 +193,7 @@ export default function Home() {
     const newEventType = isTrayOut ? "insert" : "remove";
     
     try {
-      await logEvent.mutateAsync({
+      const result = await logEvent.mutateAsync({
         eventType: newEventType,
         trayNumber: settings?.currentTrayNumber || 2,
         timestamp: now,
@@ -173,6 +204,8 @@ export default function Home() {
         setRemovalStartTime(now);
         setElapsedTime(0);
         setShowReminder(false);
+        setLastRemoveEventId(result.eventId);
+        setCanCancel(true);
         toast.success("Tray removed - timer started! ⏱️");
       } else {
         const duration = removalStartTime ? now - removalStartTime : 0;
@@ -180,13 +213,52 @@ export default function Home() {
         setRemovalStartTime(null);
         setElapsedTime(0);
         setShowReminder(false);
+        setLastRemoveEventId(null);
+        setCanCancel(false);
         toast.success(`Tray inserted! Out for ${formatTime(duration)} 🦷`);
+        
+        // Check for achievements after inserting
+        try {
+          const achievementResult = await checkAchievements.mutateAsync();
+          if (achievementResult.newAchievements.length > 0) {
+            achievementResult.newAchievements.forEach((achievement) => {
+              toast.success(`Achievement Unlocked! ${achievement.icon}`, {
+                description: achievement.title,
+                duration: 5000,
+              });
+            });
+            utils.achievements.getAll.invalidate();
+          }
+        } catch (err) {
+          // Silently fail achievement check
+          console.error("Failed to check achievements:", err);
+        }
       }
       
-        utils.tray.getLastEvent.invalidate();
-        utils.compliance.getToday.invalidate();
+      utils.tray.getLastEvent.invalidate();
+      utils.compliance.getToday.invalidate();
     } catch (error) {
       toast.error("Failed to log event");
+      console.error(error);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!lastRemoveEventId) return;
+    
+    try {
+      await cancelRemoveEvent.mutateAsync({ eventId: lastRemoveEventId });
+      setIsTrayOut(false);
+      setRemovalStartTime(null);
+      setElapsedTime(0);
+      setShowReminder(false);
+      setLastRemoveEventId(null);
+      setCanCancel(false);
+      toast.success("Take Out event cancelled");
+      utils.tray.getLastEvent.invalidate();
+      utils.compliance.getToday.invalidate();
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to cancel event");
       console.error(error);
     }
   };
@@ -328,7 +400,7 @@ export default function Home() {
               <motion.div
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                className="flex justify-center"
+                className="flex flex-col items-center gap-3"
               >
                 <Button
                   onClick={handleToggle}
@@ -342,6 +414,28 @@ export default function Home() {
                 >
                   {isTrayOut ? "Put In 🦷" : "Take Out 🦷"}
                 </Button>
+                
+                {/* Cancel Button */}
+                <AnimatePresence>
+                  {isTrayOut && canCancel && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                    >
+                      <Button
+                        onClick={handleCancel}
+                        disabled={cancelRemoveEvent.isPending}
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 text-destructive border-destructive hover:bg-destructive hover:text-destructive-foreground"
+                      >
+                        <X className="w-4 h-4" />
+                        Cancel ({(60 - Math.floor(elapsedTime / 1000)).toFixed(0)}s)
+                      </Button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </motion.div>
 
               {!isTrayOut && (
@@ -352,6 +446,45 @@ export default function Home() {
             </CardContent>
           </Card>
         </motion.div>
+
+        {/* Achievements Section */}
+        {achievements && achievements.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="mb-6"
+          >
+            <Card className="shadow-playful border-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-yellow-500" />
+                  Achievements & Trophies
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {achievements.slice(0, 8).map((achievement) => (
+                    <motion.div
+                      key={achievement.id}
+                      initial={{ scale: 0.9 }}
+                      animate={{ scale: 1 }}
+                      className="flex flex-col items-center p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                    >
+                      <div className="text-3xl mb-1">{achievement.icon}</div>
+                      <div className="text-xs font-semibold text-center">{achievement.title}</div>
+                    </motion.div>
+                  ))}
+                </div>
+                {achievements.length > 8 && (
+                  <p className="text-center text-sm text-muted-foreground mt-3">
+                    +{achievements.length - 8} more achievements
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
 
         {/* Dashboard Link */}
         <motion.div

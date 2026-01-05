@@ -3,6 +3,19 @@ import { integer, pgEnum, pgTable, text, timestamp, bigint, serial } from "drizz
 // Enums
 export const roleEnum = pgEnum("role", ["user", "admin"]);
 export const eventTypeEnum = pgEnum("event_type", ["remove", "insert"]);
+export const achievementTypeEnum = pgEnum("achievement_type", [
+  "perfect_day",
+  "perfect_week",
+  "perfect_month",
+  "streak_3",
+  "streak_7",
+  "streak_30",
+  "streak_100",
+  "milestone_tray_5",
+  "milestone_tray_10",
+  "milestone_tray_15",
+  "quick_return",
+]);
 
 /**
  * Core user table backing auth flow.
@@ -59,3 +72,19 @@ export const appSettings = pgTable("app_settings", {
 
 export type AppSettings = typeof appSettings.$inferSelect;
 export type InsertAppSettings = typeof appSettings.$inferInsert;
+
+/**
+ * Achievements table - tracks user achievements and trophies
+ */
+export const achievements = pgTable("achievements", {
+  id: text("id").primaryKey(), // UUID
+  achievementType: achievementTypeEnum("achievement_type").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  icon: text("icon").notNull(), // Emoji or icon identifier
+  unlockedAt: timestamp("unlocked_at").notNull().defaultNow(),
+  metadata: text("metadata"), // JSON string for additional data (e.g., streak count, tray number)
+});
+
+export type Achievement = typeof achievements.$inferSelect;
+export type InsertAchievement = typeof achievements.$inferInsert;
